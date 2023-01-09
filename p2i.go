@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/adubovikov/p2i/transpiler"
+	"github.com/influxdata/flux/ast"
+	"github.com/influxdata/flux/ast/astutil"
 	"github.com/influxdata/influxql"
 	"github.com/prometheus/prometheus/promql/parser"
 )
@@ -35,6 +37,7 @@ const (
 
 const (
 	INFLUXQL_DIALECT DialectType = "influxql"
+	FLUX_DIALECT     DialectType = "flux"
 )
 
 type Command struct {
@@ -63,36 +66,64 @@ func main() {
 	cmd.Evaluation = time.Date(2023, 1, 6, 15, 0, 0, 0, time.Local)
 	//cmd.Step = time.Nanosecond
 	cmd.DataType = TABLE_DATA
+	//cmd.Dialect = INFLUXQL_DIALECT
+	cmd.Dialect = FLUX_DIALECT
+	finalSql := "SELECT sum(sum) FROM (SELECT sum(last) FROM (SELECT *::tag, last(value) FROM go_gc_duration_seconds_count GROUP BY *) GROUP BY container) GROUP BY endpoint"
+	mustHave := influxql.MustParseStatement(finalSql)
 
-	mustHave := influxql.MustParseStatement(`SELECT sum(sum) FROM (SELECT sum(last) FROM (SELECT *::tag, last(value) FROM go_gc_duration_seconds_count GROUP BY *) GROUP BY container) GROUP BY endpoint`)
+	if cmd.Dialect == INFLUXQL_DIALECT {
 
-	expr, err := parser.ParseExpr(cmd.Cmd)
-	if err != nil {
-		fmt.Println("command parse fail:", err)
-		return
-	}
+		expr, err := parser.ParseExpr(cmd.Cmd)
+		if err != nil {
+			fmt.Println("command parse fail:", err)
+			return
+		}
 
-	t := transpiler.NewTranspiler(&cmd.Start, &cmd.End,
-		transpiler.WithTimezone(cmd.Timezone),
-		transpiler.WithEvaluation(&cmd.Evaluation),
-		transpiler.WithStep(cmd.Step),
-		transpiler.WithDataType(transpiler.DataType(cmd.DataType)),
-	)
-	sql, err := t.Transpile(expr)
-	if err != nil {
-		fmt.Println("command execute fail:", err)
-		return
-	}
+		t := transpiler.NewTranspiler(&cmd.Start, &cmd.End,
+			transpiler.WithTimezone(cmd.Timezone),
+			transpiler.WithEvaluation(&cmd.Evaluation),
+			transpiler.WithStep(cmd.Step),
+			transpiler.WithDataType(transpiler.DataType(cmd.DataType)),
+		)
+		sql, err := t.Transpile(expr)
+		if err != nil {
+			fmt.Println("command execute fail:", err)
+			return
+		}
 
-	if !reflect.DeepEqual(sql, mustHave.String()) {
-		fmt.Println("they are not equal!")
-		fmt.Println("Expression: ", cmd.Cmd)
-		fmt.Println("Generated:- [" + sql + "]")
-		fmt.Println("Expected: - [" + mustHave.String() + "]")
+		if !reflect.DeepEqual(sql, mustHave.String()) {
+			fmt.Println("they are not equal!")
+			fmt.Println("Expression: ", cmd.Cmd)
+			fmt.Println("Generated:- [" + sql + "]")
+			fmt.Println("Expected: - [" + mustHave.String() + "]")
+		} else {
+			fmt.Println("they are equal!")
+			fmt.Println("Expression: ", cmd.Cmd)
+			fmt.Println("Generated:- [" + sql + "]")
+			fmt.Println("Expected: - [" + mustHave.String() + "]")
+		}
 	} else {
-		fmt.Println("they are equal!")
-		fmt.Println("Expression: ", cmd.Cmd)
-		fmt.Println("Generated:- [" + sql + "]")
-		fmt.Println("Expected: - [" + mustHave.String() + "]")
+
+		query := &ast.CallExpression{
+			Callee: &ast.Identifier{Name: "buckets"},
+		}
+		fileAst := &ast.File{
+			Package: &ast.PackageClause{
+				Name: &ast.Identifier{Name: "main"},
+			},
+			Name: "query.flux",
+			Body: []ast.Statement{
+				&ast.ExpressionStatement{Expression: query},
+			},
+		}
+
+		doneQuery, err := astutil.Format(fileAst)
+		if err != nil {
+			fmt.Println("command execute fail:", err)
+			return
+		}
+
+		fmt.Println("Query : ", doneQuery)
+
 	}
 }

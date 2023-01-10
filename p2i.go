@@ -1,13 +1,22 @@
 package main
 
+/*
+   lib flux should be with commit f6a9675
+   https://www.sqlpac.com/en/documents/influxdb-moving-from-influxql-language-to-flux-language.html
+   https://www.sqlpac.com/en/documents/influxdb-v2-flux-language-quick-reference-guide-cheat-sheet.html
+*/
+
 import (
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"time"
 
-	"github.com/adubovikov/p2i/transpiler"
+	promqlTranspiler "github.com/adubovikov/p2i/promql/transpiler"
 	"github.com/influxdata/flux/ast"
-	"github.com/influxdata/flux/ast/astutil"
+	"github.com/influxdata/influxdb/v2"
+	influxQ "github.com/influxdata/influxdb/v2/query/influxql"
 	"github.com/influxdata/influxql"
 	"github.com/prometheus/prometheus/promql/parser"
 )
@@ -79,11 +88,11 @@ func main() {
 			return
 		}
 
-		t := transpiler.NewTranspiler(&cmd.Start, &cmd.End,
-			transpiler.WithTimezone(cmd.Timezone),
-			transpiler.WithEvaluation(&cmd.Evaluation),
-			transpiler.WithStep(cmd.Step),
-			transpiler.WithDataType(transpiler.DataType(cmd.DataType)),
+		t := promqlTranspiler.NewTranspiler(&cmd.Start, &cmd.End,
+			promqlTranspiler.WithTimezone(cmd.Timezone),
+			promqlTranspiler.WithEvaluation(&cmd.Evaluation),
+			promqlTranspiler.WithStep(cmd.Step),
+			promqlTranspiler.WithDataType(promqlTranspiler.DataType(cmd.DataType)),
 		)
 		sql, err := t.Transpile(expr)
 		if err != nil {
@@ -104,26 +113,59 @@ func main() {
 		}
 	} else {
 
-		query := &ast.CallExpression{
-			Callee: &ast.Identifier{Name: "buckets"},
-		}
-		fileAst := &ast.File{
-			Package: &ast.PackageClause{
-				Name: &ast.Identifier{Name: "main"},
-			},
-			Name: "query.flux",
-			Body: []ast.Statement{
-				&ast.ExpressionStatement{Expression: query},
-			},
-		}
+		//q, err := influxql.ParseQuery(finalSql)
+		/*
+			if err != nil {
+				fmt.Println("error during parse")
+				fmt.Println("Expression: ", err)
+				return
+			}
+		*/
 
-		doneQuery, err := astutil.Format(fileAst)
+		mesSql := "SELECT pcpu FROM netdatatsdb.autogen.vpsmetrics WHERE (time > now() -1d and host =~ /^vps/ and host !~ /(de|uk|us)/)"
+
+		now := time.Now()
+
+		tFlux := influxQ.NewTranspilerWithConfig(dbrpMapper{}, influxQ.Config{
+			Now:            now,
+			FallbackToDBRP: true,
+		})
+
+		pkg, err := tFlux.Transpile(context.Background(), mesSql)
 		if err != nil {
-			fmt.Println("command execute fail:", err)
+			fmt.Println("Expression error: ", err)
 			return
 		}
 
-		fmt.Println("Query : ", doneQuery)
+		fmt.Println("WAS: ", mesSql)
+		fmt.Println("Query : ", ast.Format(pkg))
 
 	}
+}
+
+type dbrpMapper struct{}
+
+// FindBy returns the dbrp mapping for the specified ID.
+func (d dbrpMapper) FindByID(ctx context.Context, orgID influxdb.ID, id influxdb.ID) (*influxdb.DBRPMappingV2, error) {
+	return nil, errors.New("mapping not found")
+}
+
+// FindMany returns a list of dbrp mappings that match filter and the total count of matching dbrp mappings.
+func (d dbrpMapper) FindMany(ctx context.Context, dbrp influxdb.DBRPMappingFilterV2, opts ...influxdb.FindOptions) ([]*influxdb.DBRPMappingV2, int, error) {
+	return nil, 0, errors.New("mapping not found")
+}
+
+// Create creates a new dbrp mapping, if a different mapping exists an error is returned.
+func (d dbrpMapper) Create(ctx context.Context, dbrp *influxdb.DBRPMappingV2) error {
+	return errors.New("dbrpMapper does not support creating new mappings")
+}
+
+// Update a new dbrp mapping
+func (d dbrpMapper) Update(ctx context.Context, dbrp *influxdb.DBRPMappingV2) error {
+	return errors.New("dbrpMapper does not support updating mappings")
+}
+
+// Delete removes a dbrp mapping.
+func (d dbrpMapper) Delete(ctx context.Context, orgID influxdb.ID, id influxdb.ID) error {
+	return errors.New("dbrpMapper does not support deleting mappings")
 }
